@@ -34,12 +34,24 @@ EVIDENCIJA = Path(__file__).with_name("prijave.csv")
 
 
 def _ucitaj_konfig() -> dict:
-    if not KONFIG.exists():
-        st.error(f"Nedostaje konfiguracija prijave: {KONFIG.name}. "
-                 "Vidi auth_config.example.yaml.")
-        st.stop()
-    with open(KONFIG, encoding="utf-8") as f:
-        return yaml.load(f, Loader=SafeLoader)
+    # 1) lokalni YAML fajl (razvoj)
+    if KONFIG.exists():
+        with open(KONFIG, encoding="utf-8") as f:
+            return yaml.load(f, Loader=SafeLoader)
+    # 2) Streamlit Secrets (Cloud) — sekcija [auth_config] u App Secrets
+    try:
+        if "auth_config" in st.secrets:
+            # st.secrets vraća ugniježđene AttrDict-ove → u obične dict-ove
+            import json
+            return json.loads(json.dumps(dict(st.secrets["auth_config"])))
+    except Exception:
+        pass
+    st.error(
+        "Nedostaje konfiguracija prijave. Lokalno: kopiraj "
+        "`auth_config.example.yaml` u `auth_config.yaml`. Na Streamlit "
+        "Cloud: dodaj `[auth_config]` sekciju u App Secrets (vidi PRIJAVA.md)."
+    )
+    st.stop()
 
 
 def _upisi_prijavu(korisnik: str, ime: str):
