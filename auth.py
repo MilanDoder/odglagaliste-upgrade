@@ -158,28 +158,83 @@ def _je_admin(korisnik: str, konfig: dict) -> bool:
     return "admin" in role
 
 
-def prikazi_evidenciju(korisnik: str):
-    """Sidebar: tekući korisnik; za admina i tabela svih prijava + preuzimanje."""
-    konfig = _ucitaj_konfig()
-    ime = (konfig["credentials"]["usernames"]
-           .get(korisnik, {}).get("first_name", korisnik))
-    st.sidebar.caption(f"Prijavljen: **{ime}** (`{korisnik}`)")
-
-    if not _je_admin(korisnik, konfig):
+def _prikazi_evidenciju_tabela(konfig: dict):
+    """Tabela svih prijava + preuzimanje (samo za admina, na profilnoj strani)."""
+    st.subheader("📋 Evidencija prijava")
+    if not EVIDENCIJA.exists():
+        st.info("Još nema zabilježenih prijava.")
         return
-    with st.sidebar.expander("📋 Evidencija prijava (admin)"):
-        if not EVIDENCIJA.exists():
-            st.write("Još nema zabilježenih prijava.")
-            return
-        import pandas as pd
-        df = pd.read_csv(EVIDENCIJA)
-        ukupno = len(df)
-        po_korisniku = (df.groupby("korisnik").size()
-                        .sort_values(ascending=False))
-        st.write(f"Ukupno prijava: **{ukupno}**")
-        st.dataframe(po_korisniku.rename("broj"), use_container_width=True)
-        st.caption("Posljednjih 20:")
-        st.dataframe(df.tail(20).iloc[::-1], use_container_width=True,
-                     hide_index=True)
-        st.download_button("Preuzmi prijave.csv", EVIDENCIJA.read_bytes(),
-                           file_name="prijave.csv", mime="text/csv")
+    import pandas as pd
+    df = pd.read_csv(EVIDENCIJA)
+    c1, c2 = st.columns(2)
+    c1.metric("Ukupno prijava", len(df))
+    c2.metric("Različitih korisnika", df["korisnik"].nunique())
+    po_korisniku = (df.groupby("korisnik").size()
+                    .sort_values(ascending=False).rename("broj prijava"))
+    st.write("**Po korisniku:**")
+    st.dataframe(po_korisniku, use_container_width=True)
+    st.write("**Posljednjih 50 prijava:**")
+    st.dataframe(df.tail(50).iloc[::-1], use_container_width=True,
+                 hide_index=True)
+    st.download_button("⬇️ Preuzmi prijave.csv", EVIDENCIJA.read_bytes(),
+                       file_name="prijave.csv", mime="text/csv")
+
+
+def navbar(autentikator, korisnik: str):
+    """Gornji desni 'navbar': ime prijavljenog korisnika (dugme → profil)
+    i dugme Odjava. Poziva se na vrhu aplikacije, prije naslova.
+    """
+    konfig = _ucitaj_konfig()
+    podaci = konfig["credentials"]["usernames"].get(korisnik, {})
+    ime = podaci.get("first_name", korisnik)
+    role = (podaci.get("roles") or ["korisnik"])[0]
+
+    _, desno = st.columns([3, 1])
+    with desno:
+        st.markdown(
+            "<style>"
+            "div[data-testid='column'] div.stButton > button {"
+            "  padding:2px 10px; border-radius:6px; font-size:0.85rem;}"
+            "</style>", unsafe_allow_html=True)
+        b1, b2 = st.columns([3, 2])
+        # klik na ime → otvori profilnu stranicu
+        if b1.button(f"👤 {ime}", use_container_width=True,
+                     help=f"{korisnik} · {role} — otvori moj profil"):
+            st.session_state["_prikazi_profil"] = True
+            st.rerun()
+        autentikator.logout("Odjava", "main", key="logout_navbar",
+                            use_container_width=True)
+    st.divider()
+
+
+def stranica_profila(korisnik: str) -> bool:
+    """Profilna stranica korisnika. Vraća True ako je prikazana (tada
+    aplikacija ne treba da renderuje glavni sadržaj).
+
+    Sadrži funkcije specifične za korisnika; admin ovdje vidi evidenciju
+    prijava svih korisnika.
+    """
+    if not st.session_state.get("_prikazi_profil"):
+        return False
+
+    konfig = _ucitaj_konfig()
+    podaci = konfig["credentials"]["usernames"].get(korisnik, {})
+    ime = f"{podaci.get('first_name','')} {podaci.get('last_name','')}".strip()
+    role = (podaci.get("roles") or ["korisnik"])[0]
+
+    if st.button("← Nazad na aplikaciju"):
+        st.session_state["_prikazi_profil"] = False
+        st.rerun()
+
+    st.title(f"👤 Moj profil — {ime or korisnik}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Korisničko ime", korisnik)
+    c2.metric("Rola", role)
+    c3.metric("E-mail", podaci.get("email", "—"))
+    st.divider()
+
+    if _je_admin(korisnik, konfig):
+        _prikazi_evidenciju_tabela(konfig)
+    else:
+        st.info("Za ovu rolu trenutno nema dodatnih funkcija na profilu.")
+    return True

@@ -428,16 +428,19 @@ def fig_tacka(teren, r: RezultatTackeV2, ctx: KontekstV2,
 # Glavna aplikacija
 # ---------------------------------------------------------------------------
 
-from auth import prikazi_evidenciju, zahtijevaj_prijavu
+from auth import navbar, stranica_profila, zahtijevaj_prijavu
 
 # --- PRIJAVA: zaustavlja aplikaciju dok se korisnik ne prijavi ---
 autentikator, _korisnik = zahtijevaj_prijavu()
 
-teren, vertices, dobre, lose, cm, granice, par = _ucitaj_podatke()
+# --- gornji desni navbar: korisnik (→ profil) + Odjava ---
+navbar(autentikator, _korisnik)
 
-# --- korisnik u sidebaru: odjava + (za admina) evidencija prijava ---
-autentikator.logout("Odjava", "sidebar")
-prikazi_evidenciju(_korisnik)
+# --- profilna stranica: ako je otvorena, prikaži nju umjesto aplikacije ---
+if stranica_profila(_korisnik):
+    st.stop()
+
+teren, vertices, dobre, lose, cm, granice, par = _ucitaj_podatke()
 
 st.title("Optimizacija odlagališta — v2 (nova geometrija)")
 
