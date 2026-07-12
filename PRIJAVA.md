@@ -65,3 +65,24 @@ Dodaj novi blok pod `usernames` u `auth_config.yaml` (lozinka kao običan
 tekst) i restartuj app. Za promjenu lozinke postojećem korisniku obriši
 njegovu heširanu vrijednost i upiši novu u običnom tekstu — biće ponovo
 heširana.
+
+## Gost, registracija i evidencija zahtjeva (dodato)
+
+**Gost** — na login ekranu dugme „Uđi kao gost" prijavljuje demo korisnika
+(rola `guest`). Gost može koristiti **samo ugrađeni Buvac primjer**: upload
+vlastitog terena/zona/centra masa je sakriven, checkbox za ugrađene podatke
+se ne prikazuje. Ostatak aplikacije (MC, proračun, prikazi) radi normalno.
+
+**Registracija** — na login ekranu „Registracija novog naloga" kreira nalog
+(rola `viewer`) i snima ga u `registrovani.yaml`. Napomena: na Streamlit
+Cloud je fajlsistem efemeran, pa registrovani nalozi prežive sesiju ali se
+pri rebootu/redeployu mogu izgubiti — za trajne naloge upisati ih u App
+Secrets ili vanjsku bazu. `registrovani.yaml` je u `.gitignore`.
+
+**Evidencija zahtjeva (admin)** — svako pokretanje Monte Carla i proračuna
+(GA / fiksna kupa) upisuje red u `zahtjevi.csv`: vrijeme, korisnik, metoda,
+svi ulazni parametri (npr. `generisano=100; seed=…` za MC; `populacija`,
+`generacija`, `ugao`, `rezolucija`, granice zapremine za GA), trajanje
+izvršavanja i rezultat. Admin ovu tabelu vidi na svojoj profilnoj stranici
+(„🧾 Evidencija zahtjeva"), sa pregledom po metodi i preuzimanjem CSV-a.
+`zahtjevi.csv` je u `.gitignore`.

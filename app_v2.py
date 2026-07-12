@@ -67,11 +67,20 @@ def _teren_iz_fajla(putanja: str, mtime: float) -> tuple[Teren, np.ndarray]:
     return Teren.iz_tacaka(ts.vertices), ts.vertices
 
 
-def _ucitaj_podatke():
-    """Sidebar sa uploadima; vraća (teren, vertices, dobre, lose, cm, granice, par)."""
+def _ucitaj_podatke(gost: bool = False):
+    """Sidebar sa uploadima; vraća (teren, vertices, dobre, lose, cm, granice, par).
+
+    Ako je gost=True, dozvoljen je samo ugrađeni Buvac primjer — bez
+    uploada i bez mijenjanja podataka.
+    """
     st.sidebar.title("1 · Ulazni podaci")
-    ugradjeni = st.sidebar.checkbox("Koristi ugrađene Buvac podatke (podaci/)",
-                                    value=True)
+    if gost:
+        st.sidebar.info("👋 Gost: dostupan je samo ugrađeni Buvac primjer. "
+                        "Za rad sa vlastitim podacima registruj se.")
+        ugradjeni = True
+    else:
+        ugradjeni = st.sidebar.checkbox(
+            "Koristi ugrađene Buvac podatke (podaci/)", value=True)
 
     if ugradjeni:
         p = {
@@ -428,10 +437,12 @@ def fig_tacka(teren, r: RezultatTackeV2, ctx: KontekstV2,
 # Glavna aplikacija
 # ---------------------------------------------------------------------------
 
-from auth import navbar, stranica_profila, zahtijevaj_prijavu
+from auth import (je_gost, navbar, stranica_profila, zahtijevaj_prijavu,
+                  zapisi_zahtjev)
 
 # --- PRIJAVA: zaustavlja aplikaciju dok se korisnik ne prijavi ---
 autentikator, _korisnik = zahtijevaj_prijavu()
+_gost = je_gost(_korisnik)
 
 # --- gornji desni navbar: korisnik (→ profil) + Odjava ---
 navbar(autentikator, _korisnik)
@@ -440,7 +451,7 @@ navbar(autentikator, _korisnik)
 if stranica_profila(_korisnik):
     st.stop()
 
-teren, vertices, dobre, lose, cm, granice, par = _ucitaj_podatke()
+teren, vertices, dobre, lose, cm, granice, par = _ucitaj_podatke(gost=_gost)
 
 st.title("Optimizacija odlagališta — v2 (nova geometrija)")
 
@@ -480,6 +491,7 @@ with tab2:
                                "tamo kota terena nije definisana.")
 
     if st.button("Generiši tačke", type="primary"):
+        _t_mc = time.perf_counter()
         mc = monte_carlo_tacke(
             n=int(n_mc), teren=teren,
             zona_x=granice.x_poly if f_zona else np.array(
@@ -494,6 +506,14 @@ with tab2:
         st.session_state["mc"] = mc
         st.session_state["uslov"] = float(uslov)
         st.session_state.pop("rezultati", None)
+        zapisi_zahtjev(
+            _korisnik, "Monte Carlo",
+            {"generisano": int(n_mc), "seed": int(seed),
+             "max_distanca": float(uslov),
+             "filtar_zona": f_zona, "filtar_lose": f_lose,
+             "filtar_teren": f_teren},
+            time.perf_counter() - _t_mc,
+            rezultat=f"prihvaćeno {len(mc.prihvacene)}")
 
     if "mc" in st.session_state:
         mc: MCTacke = st.session_state["mc"]
@@ -642,6 +662,24 @@ with tab3:
                      f"{len(rezultati)} dopustivih od {len(tacke)}")
         st.session_state["rezultati"] = rezultati
         st.session_state["ctx"] = ctx
+
+        if mod.startswith("GA"):
+            _param = {"metoda_kupe": "GA", "tačaka": len(tacke),
+                      "populacija": int(popul), "generacija": int(gener),
+                      "ugao": float(ugao), "profil": profil,
+                      "rezolucija": int(rez_slider),
+                      "V_min": float(v_min), "V_max": float(v_max)}
+            _naziv = "Genetski algoritam"
+        else:
+            _param = {"metoda_kupe": "fiksno", "tačaka": len(tacke),
+                      "k": float(k_fix), "h": float(h_fix),
+                      "ugao": float(ugao), "profil": profil,
+                      "rezolucija": int(rez_slider),
+                      "V_min": float(v_min), "V_max": float(v_max)}
+            _naziv = "Fiksna kupa"
+        zapisi_zahtjev(_korisnik, _naziv, _param,
+                       time.perf_counter() - t0,
+                       rezultat=f"{len(rezultati)} dopustivih od {len(tacke)}")
 
     if "rezultati" in st.session_state:
         rezultati: list[RezultatTackeV2] = st.session_state["rezultati"]

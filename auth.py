@@ -31,6 +31,42 @@ from yaml.loader import SafeLoader
 
 KONFIG = Path(__file__).with_name("auth_config.yaml")
 EVIDENCIJA = Path(__file__).with_name("prijave.csv")
+ZAHTJEVI = Path(__file__).with_name("zahtjevi.csv")
+REGISTROVANI = Path(__file__).with_name("registrovani.yaml")
+
+
+def uloga_korisnika(korisnik: str) -> str:
+    """Vraća prvu rolu korisnika ('admin'/'editor'/'viewer'/'guest'...)."""
+    try:
+        konfig = _ucitaj_konfig()
+        role = (konfig["credentials"]["usernames"]
+                .get(korisnik, {}).get("roles") or ["viewer"])
+        return role[0]
+    except Exception:
+        return "viewer"
+
+
+def je_gost(korisnik: str) -> bool:
+    if st.session_state.get("_gost") or korisnik == "gost":
+        return True
+    return uloga_korisnika(korisnik) == "guest"
+
+
+def zapisi_zahtjev(korisnik: str, metoda: str, parametri: dict,
+                   trajanje_s: float, rezultat: str = ""):
+    """Upiši jedan izvršeni zahtjev (MC/GA/…) u zahtjevi.csv za admin uvid."""
+    novi = not ZAHTJEVI.exists()
+    try:
+        with open(ZAHTJEVI, "a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if novi:
+                w.writerow(["vrijeme_utc", "korisnik", "metoda",
+                            "parametri", "trajanje_s", "rezultat"])
+            params = "; ".join(f"{k}={v}" for k, v in parametri.items())
+            w.writerow([datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        korisnik, metoda, params, f"{trajanje_s:.2f}", rezultat])
+    except OSError:
+        pass
 
 
 def _normalizuj(konfig: dict) -> dict | None:
@@ -56,7 +92,27 @@ def _normalizuj(konfig: dict) -> dict | None:
     return None
 
 
+def _spoji_registrovane(konfig: dict) -> dict:
+    """Dodaj u konfig korisnike registrovane preko forme (registrovani.yaml)
+    i uvijek dostupan 'gost' nalog (rola guest)."""
+    usernames = konfig.setdefault("credentials", {}).setdefault("usernames", {})
+    # registrovani sa diska (perzistira lokalno; na Cloud-u efemerno)
+    if REGISTROVANI.exists():
+        try:
+            reg = yaml.load(REGISTROVANI.read_text(encoding="utf-8"),
+                            Loader=SafeLoader) or {}
+            for u, d in (reg.get("usernames") or {}).items():
+                usernames.setdefault(u, d)
+        except Exception:
+            pass
+    return konfig
+
+
 def _ucitaj_konfig() -> dict:
+    return _spoji_registrovane(_ucitaj_konfig_sirovi())
+
+
+def _ucitaj_konfig_sirovi() -> dict:
     import json
 
     def _u(x):
@@ -140,11 +196,39 @@ def zahtijevaj_prijavu(naslov: str = "🔒 Optimizacija odlagališta — prijava
     autentikator.login(location="main", key="Login")
 
     status = st.session_state.get("authentication_status")
+
+    # --- GOST i REGISTRACIJA (samo dok korisnik nije prijavljen) ---
+    if status is not True:
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("👋 Uđi kao gost (demo — samo Buvac primjer)",
+                         use_container_width=True):
+                st.session_state["authentication_status"] = True
+                st.session_state["username"] = "gost"
+                st.session_state["name"] = "Gost"
+                st.session_state["_gost"] = True
+                st.rerun()
+        with c2:
+            with st.expander("📝 Registracija novog naloga"):
+                try:
+                    (email, uname, ime_reg) = autentikator.register_user(
+                        location="main", key="Register",
+                        fields={"Form name": "Registracija",
+                                "Username": "Korisničko ime",
+                                "Password": "Lozinka",
+                                "Repeat password": "Ponovi lozinku",
+                                "Register": "Registruj se"})
+                    if uname:
+                        _sacuvaj_registrovanog(uname, konfig)
+                        st.success("Nalog kreiran — sada se prijavi gore.")
+                except Exception as e:
+                    st.warning(f"Registracija: {e}")
+
     if status is False:
         st.error("Pogrešno korisničko ime ili lozinka.")
         st.stop()
     if status is None:
-        st.info("Unesite korisničko ime i lozinku za pristup aplikaciji.")
+        st.info("Prijavi se, uđi kao gost ili registruj novi nalog.")
         st.stop()
 
     # prijavljen
@@ -152,6 +236,30 @@ def zahtijevaj_prijavu(naslov: str = "🔒 Optimizacija odlagališta — prijava
     ime = st.session_state.get("name", korisnik)
     _upisi_prijavu(korisnik, ime)
     return autentikator, korisnik
+
+
+def _sacuvaj_registrovanog(uname: str, konfig: dict):
+    """Perzistiraj novoregistrovanog korisnika u registrovani.yaml (rola viewer).
+
+    Napomena: na Streamlit Cloud fajlsistem je efemeran — nalog preživi
+    sesiju, ali se pri redeployu/rebootu može izgubiti. Za trajne naloge
+    upisati ih u App Secrets ili vanjsku bazu.
+    """
+    podaci = konfig["credentials"]["usernames"].get(uname)
+    if not podaci:
+        return
+    podaci.setdefault("roles", ["viewer"])
+    try:
+        reg = {}
+        if REGISTROVANI.exists():
+            reg = yaml.load(REGISTROVANI.read_text(encoding="utf-8"),
+                            Loader=SafeLoader) or {}
+        reg.setdefault("usernames", {})[uname] = podaci
+        REGISTROVANI.write_text(
+            yaml.dump(reg, allow_unicode=True, sort_keys=False),
+            encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _je_admin(korisnik: str, konfig: dict) -> bool:
@@ -245,6 +353,30 @@ def stranica_profila(korisnik: str) -> bool:
 
     if _je_admin(korisnik, konfig):
         _prikazi_evidenciju_tabela(konfig)
+        st.divider()
+        _prikazi_zahtjeve_tabela()
     else:
         st.info("Za ovu rolu trenutno nema dodatnih funkcija na profilu.")
     return True
+
+
+def _prikazi_zahtjeve_tabela():
+    """Admin: pregled svih izvršenih zahtjeva (MC/GA) sa parametrima i trajanjem."""
+    st.subheader("🧾 Evidencija zahtjeva (proračuni)")
+    if not ZAHTJEVI.exists():
+        st.info("Još nema izvršenih zahtjeva.")
+        return
+    import pandas as pd
+    df = pd.read_csv(ZAHTJEVI)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Ukupno zahtjeva", len(df))
+    c2.metric("Metode", df["metoda"].nunique())
+    c3.metric("Prosj. trajanje", f"{df['trajanje_s'].astype(float).mean():.1f} s")
+    st.write("**Po metodi:**")
+    st.dataframe(df.groupby("metoda").size().rename("broj"),
+                 use_container_width=True)
+    st.write("**Posljednjih 50 zahtjeva:**")
+    st.dataframe(df.tail(50).iloc[::-1], use_container_width=True,
+                 hide_index=True)
+    st.download_button("⬇️ Preuzmi zahtjeve.csv", ZAHTJEVI.read_bytes(),
+                       file_name="zahtjevi.csv", mime="text/csv")

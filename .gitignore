@@ -4,3 +4,5 @@ __pycache__/
 # tajne i evidencija prijava — NE commitovati
 auth_config.yaml
 prijave.csv
+zahtjevi.csv
+registrovani.yaml
