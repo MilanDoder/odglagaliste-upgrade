@@ -108,6 +108,8 @@ def _upisi_prijavu(korisnik: str, ime: str):
     """Dodaj red u prijave.csv (jednom po sesiji, na uspješnu prijavu)."""
     if st.session_state.get("_prijava_upisana"):
         return
+    # nova prijava → uvijek počni na aplikaciji, ne na profilu
+    st.session_state["_prikazi_profil"] = False
     novi = not EVIDENCIJA.exists()
     try:
         with open(EVIDENCIJA, "a", newline="", encoding="utf-8") as f:
@@ -181,24 +183,29 @@ def _prikazi_evidenciju_tabela(konfig: dict):
 
 
 def navbar(autentikator, korisnik: str):
-    """Gornja traka poravnata desno: ime prijavljenog korisnika
-    (dugme → profil) i dugme Odjava, jedno pored drugog.
+    """Mala traka gore-desno (kao Share toolbar): ime korisnika (→ profil)
+    i Odjava, kompaktno i podignuto uz sam vrh stranice.
     """
     konfig = _ucitaj_konfig()
     podaci = konfig["credentials"]["usernames"].get(korisnik, {})
     ime = podaci.get("first_name", korisnik)
     role = (podaci.get("roles") or ["korisnik"])[0]
 
-    # skupi razmak na vrhu + kompaktna dugmad da liči na navbar
+    # podigni traku uz vrh i napravi dugmad malim/linkolikim (kao toolbar)
     st.markdown(
         "<style>"
-        ".block-container{padding-top:2.2rem;}"
-        "div.stButton>button{padding:4px 14px;border-radius:8px;"
-        "font-size:0.85rem;font-weight:600;}"
+        ".block-container{padding-top:1rem;}"
+        # ciljamo samo dugmad u navbar redu (prva dva stButton na stranici)
+        "div[data-testid='stHorizontalBlock']:first-of-type "
+        "div.stButton>button{"
+        "  padding:1px 10px;border:none;background:transparent;"
+        "  color:#31333F;font-size:0.9rem;font-weight:600;"
+        "  box-shadow:none;min-height:0;line-height:1.6;}"
+        "div[data-testid='stHorizontalBlock']:first-of-type "
+        "div.stButton>button:hover{color:#7047EB;background:transparent;}"
         "</style>", unsafe_allow_html=True)
 
-    # lijeva prazna zona gura traku skroz desno; ime i Odjava u istom redu
-    _, kol_ime, kol_odjava = st.columns([6, 1.1, 1.1])
+    _, kol_ime, kol_odjava = st.columns([7, 1.0, 1.0])
     with kol_ime:
         if st.button(f"👤 {ime}", use_container_width=True,
                      key="nav_profil",
@@ -208,7 +215,6 @@ def navbar(autentikator, korisnik: str):
     with kol_odjava:
         autentikator.logout("Odjava", "main", key="logout_navbar",
                             use_container_width=True)
-    st.divider()
 
 
 def stranica_profila(korisnik: str) -> bool:
