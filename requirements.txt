@@ -13,3 +13,4 @@ pyarrow<25
 # manifold3d
 streamlit-authenticator
 PyYAML
+supabase

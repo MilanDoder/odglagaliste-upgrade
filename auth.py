@@ -29,6 +29,16 @@ import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
 
+try:
+    import supabase_db as sdb
+except Exception:
+    sdb = None
+
+
+def _sb() -> bool:
+    """Da li je Supabase aktivan (konfigurisan)."""
+    return sdb is not None and sdb.aktivan()
+
 KONFIG = Path(__file__).with_name("auth_config.yaml")
 EVIDENCIJA = Path(__file__).with_name("prijave.csv")
 ZAHTJEVI = Path(__file__).with_name("zahtjevi.csv")
@@ -64,7 +74,11 @@ def je_gost(korisnik: str) -> bool:
 
 def zapisi_zahtjev(korisnik: str, metoda: str, parametri: dict,
                    trajanje_s: float, rezultat: str = ""):
-    """Upiši jedan izvršeni zahtjev (MC/GA/…) u zahtjevi.csv za admin uvid."""
+    """Upiši jedan izvršeni zahtjev (MC/GA/…). Supabase ako je aktivan,
+    inače lokalni zahtjevi.csv."""
+    if _sb():
+        sdb.zapisi_zahtjev(korisnik, metoda, parametri, trajanje_s, rezultat)
+        return
     novi = not ZAHTJEVI.exists()
     try:
         with open(ZAHTJEVI, "a", newline="", encoding="utf-8") as f:
@@ -103,11 +117,18 @@ def _normalizuj(konfig: dict) -> dict | None:
 
 
 def _spoji_registrovane(konfig: dict) -> dict:
-    """Dodaj u konfig korisnike registrovane preko forme (registrovani.yaml)
-    i uvijek dostupan 'gost' nalog (rola guest)."""
+    """Dodaj u konfig korisnike iz Supabase (ako je aktivan) ili iz
+    registrovani.yaml, plus uvijek dostupan 'gost' nalog."""
     usernames = konfig.setdefault("credentials", {}).setdefault("usernames", {})
-    # registrovani sa diska (perzistira lokalno; na Cloud-u efemerno)
-    if REGISTROVANI.exists():
+    # 1) Supabase korisnici (trajno skladište) imaju prioritet
+    if _sb():
+        try:
+            for u, d in (sdb.ucitaj_korisnike().get("usernames") or {}).items():
+                usernames[u] = d          # DB je izvor istine
+        except Exception:
+            pass
+    # 2) lokalni registrovani.yaml (fallback bez Supabase)
+    elif REGISTROVANI.exists():
         try:
             reg = yaml.load(REGISTROVANI.read_text(encoding="utf-8"),
                             Loader=SafeLoader) or {}
@@ -171,11 +192,17 @@ def _ucitaj_konfig_sirovi() -> dict:
 
 
 def _upisi_prijavu(korisnik: str, ime: str):
-    """Dodaj red u prijave.csv (jednom po sesiji, na uspješnu prijavu)."""
+    """Zabilježi uspješnu prijavu (jednom po sesiji). Supabase ako je
+    aktivan, inače lokalni prijave.csv."""
     if st.session_state.get("_prijava_upisana"):
         return
     # nova prijava → uvijek počni na aplikaciji, ne na profilu
     st.session_state["_prikazi_profil"] = False
+    if _sb():
+        sdb.zapisi_prijavu(korisnik, ime)
+        sdb.zapisi_pokusaj(korisnik, True)
+        st.session_state["_prijava_upisana"] = True
+        return
     novi = not EVIDENCIJA.exists()
     try:
         with open(EVIDENCIJA, "a", newline="", encoding="utf-8") as f:
@@ -239,9 +266,14 @@ def zahtijevaj_prijavu(naslov: str = "🔒 Optimizacija odlagališta — prijava
                         st.warning(f"Registracija: {e}")
 
         if status is False:
+            if _sb() and not st.session_state.get("_pokusaj_upisan"):
+                sdb.zapisi_pokusaj(st.session_state.get("username"),
+                                   False, "pogrešna lozinka")
+                st.session_state["_pokusaj_upisan"] = True
             st.error("Pogrešno korisničko ime ili lozinka.")
             st.stop()
         if status is None:
+            st.session_state.pop("_pokusaj_upisan", None)
             st.info("Prijavi se, uđi kao gost ili registruj novi nalog.")
             st.stop()
 
@@ -271,16 +303,15 @@ def zahtijevaj_prijavu(naslov: str = "🔒 Optimizacija odlagališta — prijava
 
 
 def _sacuvaj_registrovanog(uname: str, konfig: dict):
-    """Perzistiraj novoregistrovanog korisnika u registrovani.yaml (rola viewer).
-
-    Napomena: na Streamlit Cloud fajlsistem je efemeran — nalog preživi
-    sesiju, ali se pri redeployu/rebootu može izgubiti. Za trajne naloge
-    upisati ih u App Secrets ili vanjsku bazu.
-    """
+    """Perzistiraj novoregistrovanog korisnika. Supabase ako je aktivan
+    (trajno), inače registrovani.yaml (efemerno na Cloud-u)."""
     podaci = konfig["credentials"]["usernames"].get(uname)
     if not podaci:
         return
     podaci.setdefault("roles", ["viewer"])
+    if _sb():
+        sdb.sacuvaj_korisnika(uname, podaci)
+        return
     try:
         reg = {}
         if REGISTROVANI.exists():
@@ -301,24 +332,33 @@ def _je_admin(korisnik: str, konfig: dict) -> bool:
 
 
 def _prikazi_evidenciju_tabela(konfig: dict):
-    """Tabela svih prijava + preuzimanje (samo za admina, na profilnoj strani)."""
-    st.subheader("📋 Evidencija prijava")
-    if not EVIDENCIJA.exists():
-        st.info("Još nema zabilježenih prijava.")
-        return
+    """Tabela svih prijava (Supabase ako je aktivan, inače prijave.csv)."""
     import pandas as pd
-    df = pd.read_csv(EVIDENCIJA)
+    st.subheader("📋 Evidencija prijava")
+    if _sb():
+        red = sdb.ucitaj_prijave()
+        if not red:
+            st.info("Još nema zabilježenih prijava.")
+            return
+        df = pd.DataFrame(red)
+        kol_korisnik = "username"
+    else:
+        if not EVIDENCIJA.exists():
+            st.info("Još nema zabilježenih prijava.")
+            return
+        df = pd.read_csv(EVIDENCIJA)
+        kol_korisnik = "korisnik"
     c1, c2 = st.columns(2)
     c1.metric("Ukupno prijava", len(df))
-    c2.metric("Različitih korisnika", df["korisnik"].nunique())
-    po_korisniku = (df.groupby("korisnik").size()
+    c2.metric("Različitih korisnika", df[kol_korisnik].nunique())
+    po_korisniku = (df.groupby(kol_korisnik).size()
                     .sort_values(ascending=False).rename("broj prijava"))
     st.write("**Po korisniku:**")
     st.dataframe(po_korisniku, use_container_width=True)
     st.write("**Posljednjih 50 prijava:**")
-    st.dataframe(df.tail(50).iloc[::-1], use_container_width=True,
-                 hide_index=True)
-    st.download_button("⬇️ Preuzmi prijave.csv", EVIDENCIJA.read_bytes(),
+    st.dataframe(df.head(50) if _sb() else df.tail(50).iloc[::-1],
+                 use_container_width=True, hide_index=True)
+    st.download_button("⬇️ Preuzmi (CSV)", df.to_csv(index=False).encode(),
                        file_name="prijave.csv", mime="text/csv")
 
 
@@ -399,22 +439,45 @@ def stranica_profila(autentikator, korisnik: str) -> bool:
 
 
 def _prikazi_zahtjeve_tabela():
-    """Admin: pregled svih izvršenih zahtjeva (MC/GA) sa parametrima i trajanjem."""
-    st.subheader("🧾 Evidencija zahtjeva (proračuni)")
-    if not ZAHTJEVI.exists():
-        st.info("Još nema izvršenih zahtjeva.")
-        return
+    """Admin: pregled izvršenih zahtjeva (MC/GA) + pokušaji prijave.
+    Supabase ako je aktivan, inače lokalni zahtjevi.csv."""
     import pandas as pd
-    df = pd.read_csv(ZAHTJEVI)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Ukupno zahtjeva", len(df))
-    c2.metric("Metode", df["metoda"].nunique())
-    c3.metric("Prosj. trajanje", f"{df['trajanje_s'].astype(float).mean():.1f} s")
-    st.write("**Po metodi:**")
-    st.dataframe(df.groupby("metoda").size().rename("broj"),
-                 use_container_width=True)
-    st.write("**Posljednjih 50 zahtjeva:**")
-    st.dataframe(df.tail(50).iloc[::-1], use_container_width=True,
-                 hide_index=True)
-    st.download_button("⬇️ Preuzmi zahtjeve.csv", ZAHTJEVI.read_bytes(),
-                       file_name="zahtjevi.csv", mime="text/csv")
+    st.subheader("🧾 Evidencija zahtjeva (proračuni)")
+    if _sb():
+        red = sdb.ucitaj_zahtjeve()
+        df = pd.DataFrame(red) if red else pd.DataFrame()
+    else:
+        df = pd.read_csv(ZAHTJEVI) if ZAHTJEVI.exists() else pd.DataFrame()
+    if df.empty:
+        st.info("Još nema izvršenih zahtjeva.")
+    else:
+        kol_traj = "trajanje_s"
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Ukupno zahtjeva", len(df))
+        c2.metric("Metode", df["metoda"].nunique())
+        c3.metric("Prosj. trajanje", f"{df[kol_traj].astype(float).mean():.1f} s")
+        st.write("**Po metodi:**")
+        st.dataframe(df.groupby("metoda").size().rename("broj"),
+                     use_container_width=True)
+        st.write("**Posljednjih 50 zahtjeva:**")
+        prikaz = df.head(50) if _sb() else df.tail(50).iloc[::-1]
+        st.dataframe(prikaz, use_container_width=True, hide_index=True)
+        st.download_button("⬇️ Preuzmi zahtjeve (CSV)",
+                           df.to_csv(index=False).encode(),
+                           file_name="zahtjevi.csv", mime="text/csv")
+
+    # pokušaji prijave (samo uz Supabase — lokalno se ne bilježe)
+    if _sb():
+        st.divider()
+        st.subheader("🔑 Pokušaji prijave")
+        pok = sdb.ucitaj_pokusaje()
+        if not pok:
+            st.info("Nema zabilježenih pokušaja.")
+        else:
+            dfp = pd.DataFrame(pok)
+            u = int(dfp["uspjeh"].sum())
+            c1, c2 = st.columns(2)
+            c1.metric("Uspješnih", u)
+            c2.metric("Neuspješnih", len(dfp) - u)
+            st.dataframe(dfp.head(50), use_container_width=True,
+                         hide_index=True)
