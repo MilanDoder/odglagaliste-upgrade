@@ -33,39 +33,73 @@ KONFIG = Path(__file__).with_name("auth_config.yaml")
 EVIDENCIJA = Path(__file__).with_name("prijave.csv")
 
 
+def _normalizuj(konfig: dict) -> dict | None:
+    """Iz raznih rasporeda izvuče {'credentials':..., 'cookie':...}."""
+    if not isinstance(konfig, dict):
+        return None
+    # skini omotač auth_config ako postoji
+    if "auth_config" in konfig and isinstance(konfig["auth_config"], dict):
+        konfig = konfig["auth_config"]
+
+    creds = konfig.get("credentials")
+    cookie = konfig.get("cookie")
+
+    # cookie polja mogu biti direktno u konfig (bez [cookie] podsekcije)
+    if cookie is None and "name" in konfig and "key" in konfig:
+        cookie = {"name": konfig["name"], "key": konfig["key"],
+                  "expiry_days": konfig.get("expiry_days", 30)}
+
+    if creds and cookie and "name" in cookie and "key" in cookie:
+        # osiguraj expiry_days
+        cookie.setdefault("expiry_days", 30)
+        return {"credentials": creds, "cookie": cookie}
+    return None
+
+
 def _ucitaj_konfig() -> dict:
+    import json
+
+    def _u(x):
+        try:
+            return json.loads(json.dumps(x, default=lambda o: dict(o)))
+        except Exception:
+            return dict(x) if hasattr(x, "keys") else x
+
     # 1) lokalni YAML fajl (razvoj)
     if KONFIG.exists():
         with open(KONFIG, encoding="utf-8") as f:
-            return yaml.load(f, Loader=SafeLoader)
-    # 2) Streamlit Secrets (Cloud) — prihvata dva rasporeda:
-    #    a) [auth_config.cookie] / [auth_config.credentials...]  (sa omotačem)
-    #    b) [cookie] / [credentials...]  (direktno na vrhu)
+            k = _normalizuj(yaml.load(f, Loader=SafeLoader))
+            if k:
+                return k
+
+    # 2) Streamlit Secrets (Cloud) — probaj sve razumne rasporede
+    prisutni_kljucevi = []
     try:
-        import json
-
-        def _u_dict(x):
-            return json.loads(json.dumps(dict(x)))
-
-        if "auth_config" in st.secrets:
-            ac = _u_dict(st.secrets["auth_config"])
-            # tolerancija: cookie polja mogu biti direktno pod auth_config
-            if "cookie" not in ac and "name" in ac and "key" in ac:  # cookie_fallback
-                ac = {"credentials": ac.get("credentials", {}),
-                      "cookie": {"name": ac["name"], "key": ac["key"],
-                                 "expiry_days": ac.get("expiry_days", 30)}}
-            return ac
-        if "credentials" in st.secrets and "cookie" in st.secrets:
-            return {"credentials": _u_dict(st.secrets["credentials"]),
-                    "cookie": _u_dict(st.secrets["cookie"])}
+        prisutni_kljucevi = list(st.secrets.keys())
     except Exception:
         pass
+
+    try:
+        cijeli = _u(st.secrets)          # cijeli secrets kao obican dict
+        for kandidat in (cijeli,
+                         cijeli.get("auth_config"),
+                         cijeli.get("auth")):
+            k = _normalizuj(kandidat) if kandidat else None
+            if k:
+                return k
+    except Exception as e:
+        st.error(f"Greška pri čitanju App Secrets: {e}")
+        st.stop()
+
+    # 3) nije nađeno — DIJAGNOSTIKA umjesto slijepe poruke
     st.error(
-        "Nedostaje konfiguracija prijave. Lokalno: kopiraj "
-        "`auth_config.example.yaml` u `auth_config.yaml`. Na Streamlit "
-        "Cloud: dodaj naloge u App Secrets — ili kao `[auth_config.cookie]` "
-        "+ `[auth_config.credentials...]`, ili direktno `[cookie]` + "
-        "`[credentials...]` (vidi PRIJAVA.md)."
+        "Prijava: konfiguracija nije pronađena u App Secrets.\n\n"
+        f"Ključevi koje app trenutno vidi u secrets-ima: "
+        f"**{prisutni_kljucevi or 'NIŠTA (secrets prazni ili nisu sačuvani)'}**\n\n"
+        "Očekujem sekciju `[auth_config]` sa `name`, `key`, `expiry_days` i "
+        "`[auth_config.credentials.usernames.<ime>]` nalozima. Provjeri da su "
+        "secrets **sačuvani** (Manage app → Settings → Secrets → Save) i da si "
+        "poslije uradio **Reboot app**."
     )
     st.stop()
 
