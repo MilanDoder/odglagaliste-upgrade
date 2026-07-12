@@ -35,6 +35,15 @@ ZAHTJEVI = Path(__file__).with_name("zahtjevi.csv")
 REGISTROVANI = Path(__file__).with_name("registrovani.yaml")
 
 
+def _ocisti_app_stanje():
+    """Obriši sve podatke vezane za sesiju korisnika (rezultati proračuna,
+    MC tačke, kontekst, profil/guest flag, oznaka upisane prijave...).
+    Zove se na odjavi da se sesije korisnika ne miješaju."""
+    for k in ("mc", "rezultati", "ctx", "uslov", "_prikazi_profil",
+              "_gost", "_prijava_upisana", "sel_idx", "_tab_aktivni"):
+        st.session_state.pop(k, None)
+
+
 def uloga_korisnika(korisnik: str) -> str:
     """Vraća prvu rolu korisnika ('admin'/'editor'/'viewer'/'guest'...)."""
     try:
@@ -203,6 +212,7 @@ def zahtijevaj_prijavu(naslov: str = "🔒 Optimizacija odlagališta — prijava
         with c1:
             if st.button("👋 Uđi kao gost (demo — samo Buvac primjer)",
                          use_container_width=True):
+                _ocisti_app_stanje()
                 st.session_state["authentication_status"] = True
                 st.session_state["username"] = "gost"
                 st.session_state["name"] = "Gost"
@@ -234,6 +244,13 @@ def zahtijevaj_prijavu(naslov: str = "🔒 Optimizacija odlagališta — prijava
     # prijavljen
     korisnik = st.session_state.get("username", "?")
     ime = st.session_state.get("name", korisnik)
+
+    # ako se korisnik promijenio od prošlog puta (npr. cookie re-auth
+    # drugog naloga bez eksplicitne odjave) → očisti staru sesiju
+    if st.session_state.get("_aktivni_korisnik") != korisnik:
+        _ocisti_app_stanje()
+        st.session_state["_aktivni_korisnik"] = korisnik
+
     # _gost tačno odražava trenutnog korisnika (čisti stari guest flag
     # kad se npr. poslije gosta prijavi admin)
     st.session_state["_gost"] = (korisnik == "gost")
@@ -323,7 +340,8 @@ def sidebar_footer(autentikator, korisnik: str):
             st.rerun()
     with c2:
         autentikator.logout("Odjava", "sidebar", key="logout_footer",
-                            use_container_width=True)
+                            use_container_width=True,
+                            callback=lambda *_: _ocisti_app_stanje())
 
 
 def stranica_profila(autentikator, korisnik: str) -> bool:
@@ -349,7 +367,8 @@ def stranica_profila(autentikator, korisnik: str) -> bool:
             st.rerun()
     with c_odjava:
         autentikator.logout("Odjava", "main", key="logout_profil",
-                            use_container_width=True)
+                            use_container_width=True,
+                            callback=lambda *_: _ocisti_app_stanje())
 
     st.title(f"👤 Moj profil — {ime or korisnik}")
     c1, c2, c3 = st.columns(3)
