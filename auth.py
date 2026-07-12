@@ -39,6 +39,11 @@ def _sb() -> bool:
     """Da li je Supabase aktivan (konfigurisan)."""
     return sdb is not None and sdb.aktivan()
 
+
+def izvor_podataka() -> str:
+    """Čitljiv naziv aktivnog skladišta za prikaz u aplikaciji."""
+    return "Supabase baza" if _sb() else "lokalni fajlovi (privremeno)"
+
 KONFIG = Path(__file__).with_name("auth_config.yaml")
 EVIDENCIJA = Path(__file__).with_name("prijave.csv")
 ZAHTJEVI = Path(__file__).with_name("zahtjevi.csv")
@@ -384,6 +389,8 @@ def sidebar_footer(autentikator, korisnik: str):
                         unsafe_allow_html=True)
     st.sidebar.divider()
     st.sidebar.caption(f"👤 **{ime}** · {role}")
+    _ikona = "🟢 Supabase" if _sb() else "🟡 lokalno"
+    st.sidebar.caption(f"skladište: {_ikona}")
     c1, c2 = st.sidebar.columns(2)
     with c1:
         if st.button("Moj profil", use_container_width=True,
@@ -430,6 +437,20 @@ def stranica_profila(autentikator, korisnik: str) -> bool:
     st.divider()
 
     if _je_admin(korisnik, konfig):
+        # jasan indikator odakle se čita/piše istorija
+        if _sb():
+            radi, poruka = sdb.veza_radi()
+            if radi:
+                st.success("🟢 Skladište: **Supabase baza** — konekcija "
+                           "ispravna, istorija je trajna.")
+            else:
+                st.error(f"🔴 Supabase je konfigurisan, ali konekcija NE "
+                         f"radi: {poruka} Podaci se privremeno pišu u "
+                         f"lokalne fajlove.")
+        else:
+            st.warning("🟡 Skladište: **lokalni fajlovi** (privremeno — "
+                       "briše se pri rebootu na Cloud-u). Dodaj `[supabase]` "
+                       "u App Secrets za trajnu istoriju (vidi SUPABASE.md).")
         _prikazi_evidenciju_tabela(konfig)
         st.divider()
         _prikazi_zahtjeve_tabela()
