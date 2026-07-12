@@ -40,7 +40,8 @@ def _ocisti_app_stanje():
     MC tačke, kontekst, profil/guest flag, oznaka upisane prijave...).
     Zove se na odjavi da se sesije korisnika ne miješaju."""
     for k in ("mc", "rezultati", "ctx", "uslov", "_prikazi_profil",
-              "_gost", "_prijava_upisana", "sel_idx", "_tab_aktivni"):
+              "_gost", "_prijava_upisana", "sel_idx", "_tab_aktivni",
+              "_ulogovan_render"):
         st.session_state.pop(k, None)
 
 
@@ -201,49 +202,60 @@ def zahtijevaj_prijavu(naslov: str = "🔒 Optimizacija odlagališta — prijava
         konfig["cookie"]["expiry_days"],
     )
 
-    # od v0.4.x login upisuje status direktno u st.session_state
-    autentikator.login(location="main", key="Login")
+    # Sav login UI ide u jedan placeholder koji obrišemo čim je korisnik
+    # prijavljen — tako login forma ne "bljesne" pri cookie re-auth.
+    login_ph = st.empty()
+    with login_ph.container():
+        # od v0.4.x login upisuje status direktno u st.session_state
+        autentikator.login(location="main", key="Login")
+        status = st.session_state.get("authentication_status")
 
-    status = st.session_state.get("authentication_status")
+        # --- GOST i REGISTRACIJA (samo dok korisnik nije prijavljen) ---
+        if status is not True:
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("👋 Uđi kao gost (demo — samo Buvac primjer)",
+                             use_container_width=True):
+                    _ocisti_app_stanje()
+                    st.session_state["authentication_status"] = True
+                    st.session_state["username"] = "gost"
+                    st.session_state["name"] = "Gost"
+                    st.session_state["_gost"] = True
+                    st.rerun()
+            with c2:
+                with st.expander("📝 Registracija novog naloga"):
+                    try:
+                        (email, uname, ime_reg) = autentikator.register_user(
+                            location="main", key="Register",
+                            fields={"Form name": "Registracija",
+                                    "Username": "Korisničko ime",
+                                    "Password": "Lozinka",
+                                    "Repeat password": "Ponovi lozinku",
+                                    "Register": "Registruj se"})
+                        if uname:
+                            _sacuvaj_registrovanog(uname, konfig)
+                            st.success("Nalog kreiran — sada se prijavi gore.")
+                    except Exception as e:
+                        st.warning(f"Registracija: {e}")
 
-    # --- GOST i REGISTRACIJA (samo dok korisnik nije prijavljen) ---
-    if status is not True:
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("👋 Uđi kao gost (demo — samo Buvac primjer)",
-                         use_container_width=True):
-                _ocisti_app_stanje()
-                st.session_state["authentication_status"] = True
-                st.session_state["username"] = "gost"
-                st.session_state["name"] = "Gost"
-                st.session_state["_gost"] = True
-                st.rerun()
-        with c2:
-            with st.expander("📝 Registracija novog naloga"):
-                try:
-                    (email, uname, ime_reg) = autentikator.register_user(
-                        location="main", key="Register",
-                        fields={"Form name": "Registracija",
-                                "Username": "Korisničko ime",
-                                "Password": "Lozinka",
-                                "Repeat password": "Ponovi lozinku",
-                                "Register": "Registruj se"})
-                    if uname:
-                        _sacuvaj_registrovanog(uname, konfig)
-                        st.success("Nalog kreiran — sada se prijavi gore.")
-                except Exception as e:
-                    st.warning(f"Registracija: {e}")
+        if status is False:
+            st.error("Pogrešno korisničko ime ili lozinka.")
+            st.stop()
+        if status is None:
+            st.info("Prijavi se, uđi kao gost ili registruj novi nalog.")
+            st.stop()
 
-    if status is False:
-        st.error("Pogrešno korisničko ime ili lozinka.")
-        st.stop()
-    if status is None:
-        st.info("Prijavi se, uđi kao gost ili registruj novi nalog.")
-        st.stop()
+    # prijavljen → ukloni login UI odmah (bez bljeska)
+    login_ph.empty()
 
-    # prijavljen
     korisnik = st.session_state.get("username", "?")
     ime = st.session_state.get("name", korisnik)
+
+    # prvi prelaz iz nelogovan → logovan: jedan čist rerun da se login
+    # forma sigurno ne zadrži na ekranu
+    if not st.session_state.get("_ulogovan_render"):
+        st.session_state["_ulogovan_render"] = True
+        st.rerun()
 
     # ako se korisnik promijenio od prošlog puta (npr. cookie re-auth
     # drugog naloga bez eksplicitne odjave) → očisti staru sesiju
