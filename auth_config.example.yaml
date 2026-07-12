@@ -1,0 +1,29 @@
+# Kopiraj u auth_config.yaml. Lozinke unesi kao OBICAN TEKST u
+# polje password — hesiraju se automatski (auto_hash) pri prvom
+# pokretanju. Rola 'admin' vidi evidenciju prijava. cookie.key
+# promijeni u nasumican string.
+
+cookie:
+  name: odlagaliste_auth
+  key: PROMIJENI_ME_nasumican_string
+  expiry_days: 30
+credentials:
+  usernames:
+    admin:
+      email: admin@example.com
+      first_name: Admin
+      last_name: Nalog
+      password: postavi-lozinku-ovdje
+      roles:
+      - admin
+      logged_in: false
+      failed_login_attempts: 0
+    klijent:
+      email: klijent@example.com
+      first_name: Klijent
+      last_name: Demo
+      password: postavi-lozinku-ovdje
+      roles:
+      - viewer
+      logged_in: false
+      failed_login_attempts: 0

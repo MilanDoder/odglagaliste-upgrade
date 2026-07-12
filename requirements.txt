@@ -11,3 +11,5 @@ pyarrow<25
 # opciono:
 # trimesh
 # manifold3d
+streamlit-authenticator
+PyYAML
