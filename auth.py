@@ -181,27 +181,31 @@ def _prikazi_evidenciju_tabela(konfig: dict):
 
 
 def navbar(autentikator, korisnik: str):
-    """Gornji desni 'navbar': ime prijavljenog korisnika (dugme → profil)
-    i dugme Odjava. Poziva se na vrhu aplikacije, prije naslova.
+    """Gornja traka poravnata desno: ime prijavljenog korisnika
+    (dugme → profil) i dugme Odjava, jedno pored drugog.
     """
     konfig = _ucitaj_konfig()
     podaci = konfig["credentials"]["usernames"].get(korisnik, {})
     ime = podaci.get("first_name", korisnik)
     role = (podaci.get("roles") or ["korisnik"])[0]
 
-    _, desno = st.columns([3, 1])
-    with desno:
-        st.markdown(
-            "<style>"
-            "div[data-testid='column'] div.stButton > button {"
-            "  padding:2px 10px; border-radius:6px; font-size:0.85rem;}"
-            "</style>", unsafe_allow_html=True)
-        b1, b2 = st.columns([3, 2])
-        # klik na ime → otvori profilnu stranicu
-        if b1.button(f"👤 {ime}", use_container_width=True,
+    # skupi razmak na vrhu + kompaktna dugmad da liči na navbar
+    st.markdown(
+        "<style>"
+        ".block-container{padding-top:2.2rem;}"
+        "div.stButton>button{padding:4px 14px;border-radius:8px;"
+        "font-size:0.85rem;font-weight:600;}"
+        "</style>", unsafe_allow_html=True)
+
+    # lijeva prazna zona gura traku skroz desno; ime i Odjava u istom redu
+    _, kol_ime, kol_odjava = st.columns([6, 1.1, 1.1])
+    with kol_ime:
+        if st.button(f"👤 {ime}", use_container_width=True,
+                     key="nav_profil",
                      help=f"{korisnik} · {role} — otvori moj profil"):
             st.session_state["_prikazi_profil"] = True
             st.rerun()
+    with kol_odjava:
         autentikator.logout("Odjava", "main", key="logout_navbar",
                             use_container_width=True)
     st.divider()
