@@ -1,0 +1,13 @@
+numpy
+scipy
+matplotlib
+contourpy
+plotly
+streamlit
+pandas
+# pyarrow 25.0 segfault-uje pri Arrow konverziji string kolona pod
+# Streamlit thread-om (st.dataframe) — 24.x je stabilan i ima cp314 wheel
+pyarrow<25
+# opciono:
+# trimesh
+# manifold3d
