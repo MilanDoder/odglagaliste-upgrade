@@ -234,6 +234,9 @@ def zahtijevaj_prijavu(naslov: str = "🔒 Optimizacija odlagališta — prijava
     # prijavljen
     korisnik = st.session_state.get("username", "?")
     ime = st.session_state.get("name", korisnik)
+    # _gost tačno odražava trenutnog korisnika (čisti stari guest flag
+    # kad se npr. poslije gosta prijavi admin)
+    st.session_state["_gost"] = (korisnik == "gost")
     _upisi_prijavu(korisnik, ime)
     return autentikator, korisnik
 
@@ -290,42 +293,40 @@ def _prikazi_evidenciju_tabela(konfig: dict):
                        file_name="prijave.csv", mime="text/csv")
 
 
-def navbar(autentikator, korisnik: str):
-    """Mala traka gore-desno (kao Share toolbar): ime korisnika (→ profil)
-    i Odjava, kompaktno i podignuto uz sam vrh stranice.
+def sidebar_footer(autentikator, korisnik: str):
+    """Korisnik (→ profil) i Odjava zalijepljeni u DNO lijevog sidebara.
+
+    Poziva se na KRAJU aplikacije (poslije svih sidebar kontrola) da bi
+    flexbox 'margin-top:auto' spacer gurnuo traku na dno.
     """
     konfig = _ucitaj_konfig()
     podaci = konfig["credentials"]["usernames"].get(korisnik, {})
-    ime = podaci.get("first_name", korisnik)
-    role = (podaci.get("roles") or ["korisnik"])[0]
+    ime = podaci.get("first_name", korisnik) or korisnik
+    role = (podaci.get("roles") or (["guest"] if korisnik == "gost"
+                                    else ["korisnik"]))[0]
 
-    # podigni traku uz vrh i napravi dugmad malim/linkolikim (kao toolbar)
+    # sidebar kao flex kolona pune visine + spacer koji gura footer na dno
     st.markdown(
         "<style>"
-        ".block-container{padding-top:1rem;}"
-        # ciljamo samo dugmad u navbar redu (prva dva stButton na stranici)
-        "div[data-testid='stHorizontalBlock']:first-of-type "
-        "div.stButton>button{"
-        "  padding:1px 10px;border:none;background:transparent;"
-        "  color:#31333F;font-size:0.9rem;font-weight:600;"
-        "  box-shadow:none;min-height:0;line-height:1.6;}"
-        "div[data-testid='stHorizontalBlock']:first-of-type "
-        "div.stButton>button:hover{color:#7047EB;background:transparent;}"
+        "[data-testid='stSidebarUserContent']{display:flex;flex-direction:"
+        "column;min-height:calc(100vh - 90px);}"
         "</style>", unsafe_allow_html=True)
-
-    _, kol_ime, kol_odjava = st.columns([7, 1.0, 1.0])
-    with kol_ime:
-        if st.button(f"👤 {ime}", use_container_width=True,
-                     key="nav_profil",
-                     help=f"{korisnik} · {role} — otvori moj profil"):
+    st.sidebar.markdown("<div style='flex-grow:1'></div>",
+                        unsafe_allow_html=True)
+    st.sidebar.divider()
+    st.sidebar.caption(f"👤 **{ime}** · {role}")
+    c1, c2 = st.sidebar.columns(2)
+    with c1:
+        if st.button("Moj profil", use_container_width=True,
+                     key="nav_profil"):
             st.session_state["_prikazi_profil"] = True
             st.rerun()
-    with kol_odjava:
-        autentikator.logout("Odjava", "main", key="logout_navbar",
+    with c2:
+        autentikator.logout("Odjava", "sidebar", key="logout_footer",
                             use_container_width=True)
 
 
-def stranica_profila(korisnik: str) -> bool:
+def stranica_profila(autentikator, korisnik: str) -> bool:
     """Profilna stranica korisnika. Vraća True ako je prikazana (tada
     aplikacija ne treba da renderuje glavni sadržaj).
 
@@ -338,11 +339,17 @@ def stranica_profila(korisnik: str) -> bool:
     konfig = _ucitaj_konfig()
     podaci = konfig["credentials"]["usernames"].get(korisnik, {})
     ime = f"{podaci.get('first_name','')} {podaci.get('last_name','')}".strip()
-    role = (podaci.get("roles") or ["korisnik"])[0]
+    role = (podaci.get("roles") or (["guest"] if korisnik == "gost"
+                                    else ["korisnik"]))[0]
 
-    if st.button("← Nazad na aplikaciju"):
-        st.session_state["_prikazi_profil"] = False
-        st.rerun()
+    c_nazad, c_odjava = st.columns([1, 1])
+    with c_nazad:
+        if st.button("← Nazad na aplikaciju", use_container_width=True):
+            st.session_state["_prikazi_profil"] = False
+            st.rerun()
+    with c_odjava:
+        autentikator.logout("Odjava", "main", key="logout_profil",
+                            use_container_width=True)
 
     st.title(f"👤 Moj profil — {ime or korisnik}")
     c1, c2, c3 = st.columns(3)
