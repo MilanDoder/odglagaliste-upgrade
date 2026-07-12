@@ -389,18 +389,18 @@ def sidebar_footer(autentikator, korisnik: str):
                         unsafe_allow_html=True)
     st.sidebar.divider()
     st.sidebar.caption(f"👤 **{ime}** · {role}")
-    _ikona = "🟢 Supabase" if _sb() else "🟡 lokalno"
-    st.sidebar.caption(f"skladište: {_ikona}")
-    c1, c2 = st.sidebar.columns(2)
-    with c1:
-        if st.button("Moj profil", use_container_width=True,
-                     key="nav_profil"):
-            st.session_state["_prikazi_profil"] = True
-            st.rerun()
-    with c2:
-        autentikator.logout("Odjava", "sidebar", key="logout_footer",
-                            use_container_width=True,
-                            callback=lambda *_: _ocisti_app_stanje())
+    # indikator skladišta vidi SAMO admin
+    if _je_admin(korisnik, konfig):
+        _ikona = "🟢 Supabase" if _sb() else "🟡 lokalno"
+        st.sidebar.caption(f"skladište: {_ikona}")
+    # dugmad puna širine, jedno ispod drugog (kao Odjava)
+    if st.sidebar.button("Moj profil", use_container_width=True,
+                         key="nav_profil"):
+        st.session_state["_prikazi_profil"] = True
+        st.rerun()
+    autentikator.logout("Odjava", "sidebar", key="logout_footer",
+                        use_container_width=True,
+                        callback=lambda *_: _ocisti_app_stanje())
 
 
 def stranica_profila(autentikator, korisnik: str) -> bool:
