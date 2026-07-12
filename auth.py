@@ -38,18 +38,34 @@ def _ucitaj_konfig() -> dict:
     if KONFIG.exists():
         with open(KONFIG, encoding="utf-8") as f:
             return yaml.load(f, Loader=SafeLoader)
-    # 2) Streamlit Secrets (Cloud) — sekcija [auth_config] u App Secrets
+    # 2) Streamlit Secrets (Cloud) — prihvata dva rasporeda:
+    #    a) [auth_config.cookie] / [auth_config.credentials...]  (sa omotačem)
+    #    b) [cookie] / [credentials...]  (direktno na vrhu)
     try:
+        import json
+
+        def _u_dict(x):
+            return json.loads(json.dumps(dict(x)))
+
         if "auth_config" in st.secrets:
-            # st.secrets vraća ugniježđene AttrDict-ove → u obične dict-ove
-            import json
-            return json.loads(json.dumps(dict(st.secrets["auth_config"])))
+            ac = _u_dict(st.secrets["auth_config"])
+            # tolerancija: cookie polja mogu biti direktno pod auth_config
+            if "cookie" not in ac and "name" in ac and "key" in ac:  # cookie_fallback
+                ac = {"credentials": ac.get("credentials", {}),
+                      "cookie": {"name": ac["name"], "key": ac["key"],
+                                 "expiry_days": ac.get("expiry_days", 30)}}
+            return ac
+        if "credentials" in st.secrets and "cookie" in st.secrets:
+            return {"credentials": _u_dict(st.secrets["credentials"]),
+                    "cookie": _u_dict(st.secrets["cookie"])}
     except Exception:
         pass
     st.error(
         "Nedostaje konfiguracija prijave. Lokalno: kopiraj "
         "`auth_config.example.yaml` u `auth_config.yaml`. Na Streamlit "
-        "Cloud: dodaj `[auth_config]` sekciju u App Secrets (vidi PRIJAVA.md)."
+        "Cloud: dodaj naloge u App Secrets — ili kao `[auth_config.cookie]` "
+        "+ `[auth_config.credentials...]`, ili direktno `[cookie]` + "
+        "`[credentials...]` (vidi PRIJAVA.md)."
     )
     st.stop()
 
