@@ -154,14 +154,14 @@ def broj_zahtjeva_danas(username: str, danas: str, metode: list[str]) -> int:
         raise RuntimeError("Supabase klijent nije dostupan")
     od = f"{danas}T00:00:00+00:00"
     do = f"{danas}T23:59:59.999999+00:00"
-    odg = (c.table("zahtjevi")
-           .select("username", count="exact")
-           .eq("username", username)
-           .in_("metoda", list(metode))
-           .gte("vrijeme", od)
-           .lte("vrijeme", do)
-           .execute())
-    return int(odg.count or 0)
+    redovi = (c.table("zahtjevi")
+              .select("username, metoda, vrijeme")
+              .eq("username", username)
+              .in_("metoda", list(metode))
+              .gte("vrijeme", od)
+              .lte("vrijeme", do)
+              .execute().data or [])
+    return len(redovi)
 
 
 def veza_radi() -> tuple[bool, str]:
