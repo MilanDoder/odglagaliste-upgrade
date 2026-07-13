@@ -19,11 +19,9 @@ Pokretanje:  py -m streamlit run app_v2.py
 
 from __future__ import annotations
 
-import io
 import os
 import tempfile
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -849,8 +847,6 @@ with tab4:
                 return float(np.hypot(sv[:, 0] - rk.wx,
                                       sv[:, 1] - rk.wy).max())
 
-            k_lo, k_hi = 2.0, rk.k + max(0.0, (rk.wz - wz_novo)
-                                         / skupa_tan(rk.ugao)) + 5.0                 if False else (2.0, rk.k * 1.5 + 50.0)
             k_lo, k_hi = 2.0, rk.k * 1.5 + 50.0
             if _r_max(k_lo) > r_cilj + 1.0:
                 tan_ef = float(korak) / (float(korak)
