@@ -142,6 +142,28 @@ def zapisi_zahtjev(username: str, metoda: str, parametri: dict,
         pass
 
 
+def broj_zahtjeva_danas(username: str, danas: str, metode: list[str]) -> int:
+    """Koliko je zahtjeva iz `metode` korisnik pokrenuo na dan `danas`
+    (ISO datum, UTC). Koristi ga naplata.py za dnevnu kvotu.
+
+    Baca izuzetak ako upit padne — pozivalac (naplata.broj_danas) tada
+    pada nazad na lokalni CSV.
+    """
+    c = _klijent()
+    if c is None:
+        raise RuntimeError("Supabase klijent nije dostupan")
+    od = f"{danas}T00:00:00+00:00"
+    do = f"{danas}T23:59:59.999999+00:00"
+    odg = (c.table("zahtjevi")
+           .select("username", count="exact")
+           .eq("username", username)
+           .in_("metoda", list(metode))
+           .gte("vrijeme", od)
+           .lte("vrijeme", do)
+           .execute())
+    return int(odg.count or 0)
+
+
 def veza_radi() -> tuple[bool, str]:
     """Stvarno testira konekciju (lagani upit). Vraća (radi, poruka)."""
     if not aktivan():
