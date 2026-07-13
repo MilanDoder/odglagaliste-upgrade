@@ -21,6 +21,7 @@ Napomene:
 from __future__ import annotations
 
 import csv
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,6 +29,8 @@ import streamlit as st
 import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
+
+log = logging.getLogger("odlagaliste")
 
 try:
     import supabase_db as sdb
@@ -68,6 +71,7 @@ def uloga_korisnika(korisnik: str) -> str:
                 .get(korisnik, {}).get("roles") or ["viewer"])
         return role[0]
     except Exception:
+        log.debug("uloga_korisnika: čitanje konfiga palo", exc_info=True)
         return "viewer"
 
 
@@ -95,7 +99,7 @@ def zapisi_zahtjev(korisnik: str, metoda: str, parametri: dict,
             w.writerow([datetime.now(timezone.utc).isoformat(timespec="seconds"),
                         korisnik, metoda, params, f"{trajanje_s:.2f}", rezultat])
     except OSError:
-        pass
+        log.debug("upis zahtjeva u %s nije uspio", ZAHTJEVI, exc_info=True)
 
 
 def _normalizuj(konfig: dict) -> dict | None:
@@ -131,7 +135,7 @@ def _spoji_registrovane(konfig: dict) -> dict:
             for u, d in (sdb.ucitaj_korisnike().get("usernames") or {}).items():
                 usernames[u] = d          # DB je izvor istine
         except Exception:
-            pass
+            log.debug("spoj korisnika iz Supabase-a nije uspio", exc_info=True)
     # 2) lokalni registrovani.yaml (fallback bez Supabase)
     elif REGISTROVANI.exists():
         try:
@@ -140,7 +144,7 @@ def _spoji_registrovane(konfig: dict) -> dict:
             for u, d in (reg.get("usernames") or {}).items():
                 usernames.setdefault(u, d)
         except Exception:
-            pass
+            log.debug("čitanje registrovani.yaml nije uspjelo", exc_info=True)
     return konfig
 
 
@@ -218,7 +222,8 @@ def _upisi_prijavu(korisnik: str, ime: str):
                         korisnik, ime])
         st.session_state["_prijava_upisana"] = True
     except OSError:
-        pass  # na read-only FS (npr. neki hosting) evidencija se preskače
+        # na read-only FS (npr. neki hosting) evidencija se preskače
+        log.debug("upis prijave u %s nije uspio (read-only FS?)", EVIDENCIJA, exc_info=True)
 
 
 def zahtijevaj_prijavu(naslov: str = "🔒 Optimizacija odlagališta — prijava"):
@@ -327,13 +332,91 @@ def _sacuvaj_registrovanog(uname: str, konfig: dict):
             yaml.dump(reg, allow_unicode=True, sort_keys=False),
             encoding="utf-8")
     except OSError:
-        pass
+        log.debug("upis registrovani.yaml nije uspio", exc_info=True)
 
 
 def _je_admin(korisnik: str, konfig: dict) -> bool:
     role = (konfig["credentials"]["usernames"]
             .get(korisnik, {}).get("roles", []) or [])
     return "admin" in role
+
+
+# ----------------------------------------------------------------------------
+# PROMJENA / RESET LOZINKE
+# ----------------------------------------------------------------------------
+def _lozinka_ok(lozinka: str) -> bool:
+    """Ista pravila kao streamlit-authenticator: 8–20 znakova, malo i
+    veliko slovo, cifra i specijalni znak. Ako Validator nije dostupan,
+    padni na blagu provjeru dužine."""
+    try:
+        from streamlit_authenticator.utilities import Validator
+        return bool(Validator().validate_password(lozinka))
+    except Exception:
+        log.debug("Validator nedostupan, koristim provjeru dužine",
+                  exc_info=True)
+        return 8 <= len(lozinka) <= 20
+
+
+def _promijeni_lozinku_ui(autentikator, korisnik: str, konfig: dict):
+    """Korisnik mijenja SVOJU lozinku (traži se trenutna lozinka).
+
+    reset_password upisuje novi bcrypt heš u isti credentials dict koji
+    smo proslijedili Authenticate-u, pa ga odmah perzistiramo u Supabase
+    (ili registrovani.yaml bez Supabase-a).
+    """
+    if korisnik == "gost":
+        return
+    with st.expander("🔑 Promijeni lozinku"):
+        st.caption("Nova lozinka: 8–20 znakova, malo i veliko slovo, cifra "
+                   "i specijalni znak (npr. `Odlagaliste!42`).")
+        try:
+            uspjeh = autentikator.reset_password(
+                korisnik, location="main",
+                fields={"Form name": "Promjena lozinke",
+                        "Current password": "Trenutna lozinka",
+                        "New password": "Nova lozinka",
+                        "Repeat password": "Ponovi novu lozinku",
+                        "Reset": "Promijeni"},
+                key="reset_pw_self")
+        except Exception as e:
+            # pogrešna trenutna lozinka / preslaba nova / ne poklapaju se
+            st.error(f"Promjena lozinke nije uspjela: {e}")
+            return
+        if uspjeh:
+            _sacuvaj_registrovanog(korisnik, konfig)
+            st.success("Lozinka je promijenjena i sačuvana.")
+
+
+def _admin_reset_lozinke_ui(konfig: dict):
+    """Admin postavlja novu lozinku bilo kojem korisniku, bez trenutne
+    lozinke. Ovo je 'zaboravljena lozinka' put jer nema email dostave —
+    korisnik se javi adminu, admin postavi novu i saopšti mu je."""
+    st.subheader("🔧 Reset lozinke korisnika")
+    usernames = konfig["credentials"]["usernames"]
+    kandidati = sorted(u for u in usernames if u != "gost")
+    if not kandidati:
+        st.info("Nema korisnika za reset.")
+        return
+    meta = st.selectbox("Korisnik", kandidati, key="admin_reset_user")
+    c1, c2 = st.columns(2)
+    nova = c1.text_input("Nova lozinka", type="password",
+                         key="admin_reset_pw")
+    nova2 = c2.text_input("Ponovi lozinku", type="password",
+                          key="admin_reset_pw2")
+    st.caption("8–20 znakova, malo i veliko slovo, cifra i specijalni znak.")
+    if st.button("Postavi novu lozinku", key="admin_reset_btn"):
+        if not nova or nova != nova2:
+            st.error("Lozinke se ne poklapaju ili su prazne.")
+            return
+        if not _lozinka_ok(nova):
+            st.error("Lozinka ne zadovoljava pravila (8–20 znakova, malo i "
+                     "veliko slovo, cifra, specijalni znak).")
+            return
+        # isto heširanje kao biblioteka ($2b$12$...)
+        usernames[meta]["password"] = stauth.Hasher.hash(nova)
+        _sacuvaj_registrovanog(meta, konfig)
+        st.success(f"Lozinka za korisnika '{meta}' je postavljena. "
+                   "Saopšti mu novu lozinku.")
 
 
 def _prikazi_evidenciju_tabela(konfig: dict):
@@ -436,6 +519,9 @@ def stranica_profila(autentikator, korisnik: str) -> bool:
     c3.metric("E-mail", podaci.get("email", "—"))
     st.divider()
 
+    # svaki prijavljeni (osim gosta) može promijeniti svoju lozinku
+    _promijeni_lozinku_ui(autentikator, korisnik, konfig)
+
     if _je_admin(korisnik, konfig):
         # jasan indikator odakle se čita/piše istorija
         if _sb():
@@ -454,8 +540,10 @@ def stranica_profila(autentikator, korisnik: str) -> bool:
         _prikazi_evidenciju_tabela(konfig)
         st.divider()
         _prikazi_zahtjeve_tabela()
+        st.divider()
+        _admin_reset_lozinke_ui(konfig)
     else:
-        st.info("Za ovu rolu trenutno nema dodatnih funkcija na profilu.")
+        st.info("Nema dodatnih admin funkcija za ovu rolu.")
     return True
 
 
