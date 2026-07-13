@@ -694,10 +694,19 @@ with tab3:
         zapisi_zahtjev(_korisnik, _naziv, _param,
                        time.perf_counter() - t0,
                        rezultat=f"{len(rezultati)} dopustivih od {len(tacke)}")
+        # Kvota se troši ovim proračunom, a indikator se crta na vrhu skripte —
+        # osvježi stranicu da broj preostalih testiranja odmah bude tačan.
+        st.session_state["_rez_info"] = (
+            f"Gotovo za {time.perf_counter() - t0:.1f} s — "
+            f"{len(rezultati)} dopustivih od {len(tacke)}")
+        st.rerun()
 
     if "rezultati" in st.session_state:
         rezultati: list[RezultatTackeV2] = st.session_state["rezultati"]
         ctx: KontekstV2 = st.session_state["ctx"]
+        _info = st.session_state.pop("_rez_info", None)
+        if _info:
+            st.success(_info)
         if not rezultati:
             st.warning("Nijedna tačka nije dala dopustivo rješenje — "
                        "opusti granice zapremine ili povećaj max distancu.")
