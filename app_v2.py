@@ -437,6 +437,7 @@ def fig_tacka(teren, r: RezultatTackeV2, ctx: KontekstV2,
 
 from auth import (je_gost, sidebar_footer, stranica_profila,
                   zahtijevaj_prijavu, zapisi_zahtjev)
+import naplata
 
 # --- PRIJAVA: zaustavlja aplikaciju dok se korisnik ne prijavi ---
 autentikator, _korisnik = zahtijevaj_prijavu()
@@ -447,6 +448,9 @@ if stranica_profila(autentikator, _korisnik):
     st.stop()
 
 teren, vertices, dobre, lose, cm, granice, par = _ucitaj_podatke(gost=_gost)
+
+# --- indikator dnevne kvote besplatnih testiranja (sidebar) ---
+naplata.prikazi_kvotu(_korisnik)
 
 # --- korisnik + Odjava u DNU sidebara (poslije kontrola iz _ucitaj_podatke,
 #     prije tabova čiji st.stop() bi inače preskočio footer) ---
@@ -474,22 +478,25 @@ with tab1:
 # ======================= TAB 2: MONTE CARLO ================================
 with tab2:
     st.subheader("Monte Carlo izbor kandidat-tačaka")
-    cA, cB, cC = st.columns(3)
-    n_mc = cA.number_input("Broj generisanih tačaka", 50, 20000, 500, step=50)
-    seed = cB.number_input("Seed (ponovljivost)", 0, 99999, 42)
-    uslov = cC.number_input("Max distanca od centra masa (m)", 100.0, 50000.0,
-                            float(par.uslov_distance), step=100.0)
+    with st.form("mc_form"):
+        cA, cB, cC = st.columns(3)
+        n_mc = cA.number_input("Broj generisanih tačaka", 50, 20000, 500,
+                               step=50)
+        seed = cB.number_input("Seed (ponovljivost)", 0, 99999, 42)
+        uslov = cC.number_input("Max distanca od centra masa (m)", 100.0,
+                                50000.0, float(par.uslov_distance), step=100.0)
 
-    cD, cE, cF = st.columns(3)
-    f_zona = cD.checkbox("Filter: interesna zona", value=True)
-    f_lose = cE.checkbox("Filter: loše (K) zone", value=True,
-                         disabled=(len(lose) == 0),
-                         help="U ovom setu podataka nema K zona." if not lose else None)
-    f_teren = cF.checkbox("Filter: pokrivenost terena", value=True,
-                          help="Odbacuje tačke van oblaka tačaka terena — "
-                               "tamo kota terena nije definisana.")
+        cD, cE, cF = st.columns(3)
+        f_zona = cD.checkbox("Filter: interesna zona", value=True)
+        f_lose = cE.checkbox("Filter: loše (K) zone", value=True,
+                             disabled=(len(lose) == 0),
+                             help="U ovom setu podataka nema K zona." if not lose else None)
+        f_teren = cF.checkbox("Filter: pokrivenost terena", value=True,
+                              help="Odbacuje tačke van oblaka tačaka terena — "
+                                   "tamo kota terena nije definisana.")
+        _generisi = st.form_submit_button("Generiši tačke", type="primary")
 
-    if st.button("Generiši tačke", type="primary"):
+    if _generisi:
         _t_mc = time.perf_counter()
         mc = monte_carlo_tacke(
             n=int(n_mc), teren=teren,
@@ -605,7 +612,15 @@ with tab3:
         "Rezolucija proračuna (veće = tačnije, sporije)",
         [128, 160, 192, 256], value=160)
 
+    _kv = naplata.status(_korisnik)
+    if _kv["plan"] != "neograniceno":
+        st.caption(f"🎟️ Besplatnih testiranja danas: "
+                   f"{_kv['preostalo']}/{_kv['limit']}")
+
     if st.button("Pokreni proračun", type="primary"):
+        if not naplata.moze_pokrenuti(_korisnik):
+            naplata.paywall(_korisnik)
+            st.stop()
         ctx = KontekstV2(
             teren=teren, zona_x=granice.x_poly, zona_y=granice.y_poly,
             dobre_zone=dobre, centar_masa=cm,
