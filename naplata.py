@@ -54,6 +54,11 @@ def _danas_utc() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
+def _dodatno_danas() -> int:
+    """Dodatna (demo-plaćena) testiranja kupljena u ovoj sesiji za danas."""
+    return int(st.session_state.get("_dodatno_" + _danas_utc(), 0))
+
+
 # ----------------------------------------------------------------------------
 # PLAN I KVOTA
 # ----------------------------------------------------------------------------
@@ -105,8 +110,9 @@ def status(korisnik: str) -> dict:
         return {"plan": plan, "limit": None,
                 "iskorisceno": 0, "preostalo": None, "moze": True}
     isk = broj_danas(korisnik)
-    preostalo = max(0, DNEVNI_BESPLATNI - isk)
-    return {"plan": plan, "limit": DNEVNI_BESPLATNI, "iskorisceno": isk,
+    limit = DNEVNI_BESPLATNI + _dodatno_danas()
+    preostalo = max(0, limit - isk)
+    return {"plan": plan, "limit": limit, "iskorisceno": isk,
             "preostalo": preostalo, "moze": preostalo > 0}
 
 
@@ -139,6 +145,8 @@ def paywall(korisnik: str):
         "danas. Kvota se automatski obnavlja sutra (00:00 UTC).")
 
     st.markdown("#### Nastavi bez čekanja")
+    st.info("💳 Stvarni platni sistem još nije povezan. Dugmad ispod "
+            "simuliraju uspješnu uplatu radi testiranja toka.")
     c1, c2 = st.columns(2)
     with c1:
         st.markdown(
@@ -147,22 +155,24 @@ def paywall(korisnik: str):
         kolicina = st.number_input("Broj dodatnih testiranja", 1, 100, 5,
                                    key="pay_kolicina")
         st.caption(f"Ukupno: **{kolicina * CIJENA_PO_TESTU:.0f} {VALUTA}**")
+        if st.button(f"💳 Plati (demo) — {int(kolicina)} testiranja",
+                     type="primary", key="pay_poj"):
+            # ——— OVDJE ide stvarni checkout (Stripe/Paddle/…) ———
+            kljuc = "_dodatno_" + _danas_utc()
+            st.session_state[kljuc] = _dodatno_danas() + int(kolicina)
+            log.debug("demo: +%d testiranja za %s", int(kolicina), korisnik)
+            st.success(f"Dodato **{int(kolicina)}** testiranja (demo).")
+            st.rerun()
     with c2:
         st.markdown(
             "**Neograničeno (dan)**\n\n"
             f"{DNEVNI_BESPLATNI * CIJENA_PO_TESTU:.0f} {VALUTA} — "
             "neograničeno testiranja do kraja dana.")
-
-    st.divider()
-    st.info("💳 Stvarni platni sistem još nije povezan. Dugme ispod "
-            "simulira uspješnu uplatu radi testiranja toka.")
-    if st.button("💳 Plati (demo) i nastavi", type="primary", key="pay_demo"):
-        # ——— OVDJE ide stvarni checkout (Stripe/Paddle/…) ———
-        # Po uspješnoj uplati: za trajni plan pozvati npr.
-        #   sdb.sacuvaj_korisnika(korisnik, {... "roles": [...,"paid"]})
-        # Ovdje samo sesijska nadogradnja do kraja UTC dana:
-        st.session_state["_placeno_do"] = _danas_utc()
-        log.debug("demo plaćanje aktivirano za %s", korisnik)
-        st.success("Uplata potvrđena (demo). Neograničeno do kraja dana.")
-        st.rerun()
+        if st.button("💳 Plati (demo) — neograničeno danas", key="pay_unl"):
+            # Po stvarnoj uplati za TRAJNI plan: sdb.sacuvaj_korisnika(
+            #   korisnik, {... "roles": [...,"paid"]}). Ovdje samo do kraja dana:
+            st.session_state["_placeno_do"] = _danas_utc()
+            log.debug("demo: neograničeno za %s", korisnik)
+            st.success("Neograničeno do kraja dana (demo).")
+            st.rerun()
     return False
