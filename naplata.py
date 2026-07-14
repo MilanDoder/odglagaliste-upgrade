@@ -54,9 +54,31 @@ def _danas_utc() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _dodatno_danas() -> int:
-    """Dodatna (demo-plaćena) testiranja kupljena u ovoj sesiji za danas."""
-    return int(st.session_state.get("_dodatno_" + _danas_utc(), 0))
+def _dodatak(korisnik: str) -> tuple[int, bool]:
+    """(kupljena dodatna testiranja danas, ima li 'neograničeno' za danas).
+    Iz Supabase-a ako je aktivan; inače sesijski fallback (demo bez baze)."""
+    danas = _danas_utc()
+    if _sb():
+        try:
+            return sdb.kvota_dodatak(korisnik, danas)
+        except Exception:
+            log.debug("čitanje kvota_dodatak palo", exc_info=True)
+    suma = int(st.session_state.get("_dodatno_" + danas, 0))
+    neogr = st.session_state.get("_placeno_do") == danas
+    return suma, neogr
+
+
+def _upisi_kupovinu(korisnik: str, broj: int | None) -> None:
+    """Trajno zabilježi kupovinu (broj=None → neograničeno danas).
+    U bazu ako je aktivna; inače u sesiju."""
+    danas = _danas_utc()
+    if _sb() and sdb.dodaj_kvotu(korisnik, danas, broj):
+        return
+    if broj is None:
+        st.session_state["_placeno_do"] = danas
+    else:
+        kljuc = "_dodatno_" + danas
+        st.session_state[kljuc] = int(st.session_state.get(kljuc, 0)) + int(broj)
 
 
 # ----------------------------------------------------------------------------
@@ -70,8 +92,8 @@ def plan_korisnika(korisnik: str) -> str:
             return "neograniceno"
     except Exception:
         log.debug("plan_korisnika: čitanje uloga palo", exc_info=True)
-    # sesijska nadogradnja (demo plaćanje važi do kraja UTC dana)
-    if st.session_state.get("_placeno_do") == _danas_utc():
+    # kupljeno "neograničeno danas" (baza; sesija kao fallback)
+    if _dodatak(korisnik)[1]:
         return "neograniceno"
     return "besplatno"
 
@@ -110,7 +132,7 @@ def status(korisnik: str) -> dict:
         return {"plan": plan, "limit": None,
                 "iskorisceno": 0, "preostalo": None, "moze": True}
     isk = broj_danas(korisnik)
-    limit = DNEVNI_BESPLATNI + _dodatno_danas()
+    limit = DNEVNI_BESPLATNI + _dodatak(korisnik)[0]
     preostalo = max(0, limit - isk)
     return {"plan": plan, "limit": limit, "iskorisceno": isk,
             "preostalo": preostalo, "moze": preostalo > 0}
@@ -158,8 +180,7 @@ def paywall(korisnik: str):
         if st.button(f"💳 Plati (demo) — {int(kolicina)} testiranja",
                      type="primary", key="pay_poj"):
             # ——— OVDJE ide stvarni checkout (Stripe/Paddle/…) ———
-            kljuc = "_dodatno_" + _danas_utc()
-            st.session_state[kljuc] = _dodatno_danas() + int(kolicina)
+            _upisi_kupovinu(korisnik, int(kolicina))
             log.debug("demo: +%d testiranja za %s", int(kolicina), korisnik)
             st.success(f"Dodato **{int(kolicina)}** testiranja (demo).")
             st.rerun()
@@ -170,8 +191,8 @@ def paywall(korisnik: str):
             "neograničeno testiranja do kraja dana.")
         if st.button("💳 Plati (demo) — neograničeno danas", key="pay_unl"):
             # Po stvarnoj uplati za TRAJNI plan: sdb.sacuvaj_korisnika(
-            #   korisnik, {... "roles": [...,"paid"]}). Ovdje samo do kraja dana:
-            st.session_state["_placeno_do"] = _danas_utc()
+            #   korisnik, {... "roles": [...,"paid"]}). Ovdje do kraja dana:
+            _upisi_kupovinu(korisnik, None)
             log.debug("demo: neograničeno za %s", korisnik)
             st.success("Neograničeno do kraja dana (demo).")
             st.rerun()

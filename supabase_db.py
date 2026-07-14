@@ -142,6 +142,42 @@ def zapisi_zahtjev(username: str, metoda: str, parametri: dict,
         pass
 
 
+# ----------------------------------------------------------------------------
+# KVOTA — kupljena dodatna testiranja (tabela kvota_dodatak)
+# ----------------------------------------------------------------------------
+def dodaj_kvotu(username: str, datum: str, broj: int | None) -> bool:
+    """Zabilježi kupovinu za dan `datum` (ISO). broj=None → neograničeno
+    do kraja tog dana. Vraća True ako je upis uspio."""
+    c = _klijent()
+    if c is None:
+        return False
+    try:
+        c.table("kvota_dodatak").insert({
+            "username": username, "datum": datum,
+            "broj": None if broj is None else int(broj),
+        }).execute()
+        return True
+    except Exception as e:
+        st.warning(f"Supabase: upis kupovine nije uspio: {e}")
+        return False
+
+
+def kvota_dodatak(username: str, datum: str) -> tuple[int, bool]:
+    """(zbir kupljenih testiranja, ima li 'neograničeno') za dan `datum`.
+    Baca izuzetak ako upit padne — pozivalac pada na sesijski fallback."""
+    c = _klijent()
+    if c is None:
+        raise RuntimeError("Supabase klijent nije dostupan")
+    redovi = (c.table("kvota_dodatak")
+              .select("broj")
+              .eq("username", username)
+              .eq("datum", datum)
+              .execute().data or [])
+    neogr = any(r.get("broj") is None for r in redovi)
+    suma = sum(int(r["broj"]) for r in redovi if r.get("broj") is not None)
+    return suma, neogr
+
+
 def broj_zahtjeva_danas(username: str, danas: str, metode: list[str]) -> int:
     """Koliko je zahtjeva iz `metode` korisnik pokrenuo na dan `danas`
     (ISO datum, UTC). Koristi ga naplata.py za dnevnu kvotu.
@@ -162,6 +198,48 @@ def broj_zahtjeva_danas(username: str, danas: str, metode: list[str]) -> int:
               .lte("vrijeme", do)
               .execute().data or [])
     return len(redovi)
+
+
+def procitaj_kvota_dodatak(username: str, datum: str) -> dict:
+    """Kupljeni dodatak za dan: {"dodatno": int, "neograniceno": bool}.
+    Baca izuzetak ako upit padne (pozivalac odlučuje o fallbacku)."""
+    c = _klijent()
+    if c is None:
+        raise RuntimeError("Supabase klijent nije dostupan")
+    red = (c.table("kvota_dodatak").select("dodatno, neograniceno")
+           .eq("username", username).eq("datum", datum)
+           .limit(1).execute().data or [])
+    if not red:
+        return {"dodatno": 0, "neograniceno": False}
+    return {"dodatno": int(red[0].get("dodatno") or 0),
+            "neograniceno": bool(red[0].get("neograniceno"))}
+
+
+def upisi_kvota_dodatak(username: str, datum: str,
+                        dodatno_plus: int = 0,
+                        neograniceno: bool | None = None) -> bool:
+    """Uveća `dodatno` za `dodatno_plus` i/ili postavi `neograniceno`
+    za (username, datum). Vraća True ako je upis uspio."""
+    c = _klijent()
+    if c is None:
+        return False
+    try:
+        tren = {"dodatno": 0, "neograniceno": False}
+        try:
+            tren = procitaj_kvota_dodatak(username, datum)
+        except Exception:
+            pass
+        podaci = {
+            "username": username, "datum": datum,
+            "dodatno": tren["dodatno"] + int(dodatno_plus),
+            "neograniceno": (tren["neograniceno"]
+                             if neograniceno is None else bool(neograniceno)),
+        }
+        c.table("kvota_dodatak").upsert(podaci).execute()
+        return True
+    except Exception as e:
+        st.warning(f"Supabase: upis kvota_dodatak nije uspio: {e}")
+        return False
 
 
 def veza_radi() -> tuple[bool, str]:
