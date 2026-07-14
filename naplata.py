@@ -143,6 +143,25 @@ def moze_pokrenuti(korisnik: str) -> bool:
 
 
 # ----------------------------------------------------------------------------
+# CALLBACK-ovi ZA PLAĆANJE
+# Izvršavaju se PRIJE ponovnog prolaza skripte, pa kupovina prođe čak i ako
+# se paywall u sljedećem prolazu ne nacrta (klasični problem ugniježdenih
+# dugmadi u Streamlit-u).
+# ----------------------------------------------------------------------------
+def _cb_kupi_pojedinacno(korisnik: str) -> None:
+    kolicina = int(st.session_state.get("pay_kolicina", 1))
+    _upisi_kupovinu(korisnik, kolicina)
+    st.session_state["_pay_poruka"] = \
+        f"✅ Uplata potvrđena (demo) — dodato **{kolicina}** testiranja."
+
+
+def _cb_kupi_neograniceno(korisnik: str) -> None:
+    _upisi_kupovinu(korisnik, None)
+    st.session_state["_pay_poruka"] = \
+        "✅ Uplata potvrđena (demo) — neograničeno do kraja dana."
+
+
+# ----------------------------------------------------------------------------
 # PRIKAZ
 # ----------------------------------------------------------------------------
 def prikazi_kvotu(korisnik: str, gdje=None):
@@ -177,23 +196,16 @@ def paywall(korisnik: str):
         kolicina = st.number_input("Broj dodatnih testiranja", 1, 100, 5,
                                    key="pay_kolicina")
         st.caption(f"Ukupno: **{kolicina * CIJENA_PO_TESTU:.0f} {VALUTA}**")
-        if st.button(f"💳 Plati (demo) — {int(kolicina)} testiranja",
-                     type="primary", key="pay_poj"):
-            # ——— OVDJE ide stvarni checkout (Stripe/Paddle/…) ———
-            _upisi_kupovinu(korisnik, int(kolicina))
-            log.debug("demo: +%d testiranja za %s", int(kolicina), korisnik)
-            st.success(f"Dodato **{int(kolicina)}** testiranja (demo).")
-            st.rerun()
+        st.button("💳 Plati (demo) — dodatna testiranja",
+                  type="primary", key="pay_poj",
+                  on_click=_cb_kupi_pojedinacno, args=(korisnik,))
     with c2:
         st.markdown(
             "**Neograničeno (dan)**\n\n"
             f"{DNEVNI_BESPLATNI * CIJENA_PO_TESTU:.0f} {VALUTA} — "
             "neograničeno testiranja do kraja dana.")
-        if st.button("💳 Plati (demo) — neograničeno danas", key="pay_unl"):
-            # Po stvarnoj uplati za TRAJNI plan: sdb.sacuvaj_korisnika(
-            #   korisnik, {... "roles": [...,"paid"]}). Ovdje do kraja dana:
-            _upisi_kupovinu(korisnik, None)
-            log.debug("demo: neograničeno za %s", korisnik)
-            st.success("Neograničeno do kraja dana (demo).")
-            st.rerun()
+        st.button("💳 Plati (demo) — neograničeno danas", key="pay_unl",
+                  on_click=_cb_kupi_neograniceno, args=(korisnik,))
+        # Po stvarnoj uplati za TRAJNI plan: sdb.sacuvaj_korisnika(
+        #   korisnik, {... "roles": [...,"paid"]})
     return False
